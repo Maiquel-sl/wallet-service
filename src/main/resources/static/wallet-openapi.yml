@@ -1,0 +1,289 @@
+openapi: 3.1.0
+info:
+  title: Mobile Wallet Microservice (wallet-service)
+  description: Reactive Open-API Contract managing standalone Mobile Wallets (no bank account required), phone-to-phone payments, and Debit Card linking (operating exclusively on the card's primary bank account via Apache Kafka).
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: API Gateway Entry Point
+  - url: http://localhost:8085
+    description: Direct Wallet Service Instance
+
+paths:
+  /api/wallets:
+    post:
+      summary: Register a new Mobile Wallet (no bank account required)
+      description: Creates a Mobile Wallet using an identification document (DNI, CEX, PASSPORT), unique mobile phone number, device IMEI, and email address.
+      operationId: createWallet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MobileWallet'
+            examples:
+              newWallet:
+                summary: Standalone Mobile Wallet Registration
+                value:
+                  documentType: DNI
+                  documentNumber: "71234568"
+                  phoneNumber: "987654321"
+                  imei: "356938035643809"
+                  email: usuario.wallet@email.com
+                  balance: 150.00
+                  currency: PEN
+      responses:
+        '201':
+          description: Mobile Wallet provisioned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileWallet'
+        '400':
+          description: Validation error (invalid document type, missing IMEI/email, or duplicate phone number).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/wallets/phone/{phoneNumber}:
+    get:
+      summary: Find a Mobile Wallet by its registered mobile phone number
+      operationId: getWalletByPhone
+      parameters:
+        - name: phoneNumber
+          in: path
+          required: true
+          description: Registered 9-digit mobile phone number
+          schema:
+            type: string
+            example: "987654321"
+      responses:
+        '200':
+          description: Mobile Wallet details retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileWallet'
+        '404':
+          description: No Mobile Wallet registered with the provided phone number.
+
+  /api/wallets/link-card:
+    post:
+      summary: Link a Mobile Wallet to a Bank Debit Card
+      description: Initiates asynchronous Debit Card validation via Apache Kafka. Once LINKED, payments debit or credit exclusively the primary bank account associated with the Debit Card.
+      operationId: linkDebitCard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkCardRequest'
+      responses:
+        '200':
+          description: Card link request submitted (status set to PENDING_VALIDATION until confirmed by account-service).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileWallet'
+        '400':
+          description: Wallet not found or missing required fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/wallets/pay:
+    post:
+      summary: Send a payment between Mobile Wallets using phone numbers
+      description: Transfers funds from senderPhone to receiverPhone. Operates on internal wallet balance or exclusively on the linked Debit Card's primary bank account via Kafka.
+      operationId: sendPayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WalletPaymentRequest'
+      responses:
+        '201':
+          description: Mobile payment processed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletTransaction'
+        '400':
+          description: Insufficient wallet balance, same sender/receiver phone, or wallet not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/wallets/phone/{phoneNumber}/transactions:
+    get:
+      summary: Get chronological payment history for a Mobile Wallet
+      description: Retrieves all sent and received payments for a mobile phone number, ordered from newest to oldest.
+      operationId: getWalletHistory
+      parameters:
+        - name: phoneNumber
+          in: path
+          required: true
+          description: Registered mobile phone number
+          schema:
+            type: string
+            example: "987654321"
+      responses:
+        '200':
+          description: Chronological list of wallet transactions retrieved.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WalletTransaction'
+        '400':
+          description: Mobile Wallet not found for the given phone number.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    MobileWallet:
+      type: object
+      required:
+        - documentType
+        - documentNumber
+        - phoneNumber
+        - imei
+        - email
+      properties:
+        id:
+          type: string
+          example: 6736c1a2b3c4d5e6f7a80001
+        documentType:
+          type: string
+          enum: [DNI, CEX, PASSPORT]
+          example: DNI
+        documentNumber:
+          type: string
+          example: "71234568"
+        phoneNumber:
+          type: string
+          example: "987654321"
+        imei:
+          type: string
+          example: "356938035643809"
+        email:
+          type: string
+          format: email
+          example: usuario.wallet@email.com
+        balance:
+          type: number
+          format: double
+          description: Standalone wallet balance (used when no Debit Card is linked).
+          example: 150.00
+        currency:
+          type: string
+          default: PEN
+          example: PEN
+        linkedDebitCardNumber:
+          type: string
+          nullable: true
+          example: "4558111122223333"
+        cardLinkStatus:
+          type: string
+          enum: [NONE, PENDING_VALIDATION, LINKED, REJECTED]
+          example: LINKED
+        status:
+          type: string
+          enum: [ACTIVE, BLOCKED]
+          example: ACTIVE
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    LinkCardRequest:
+      type: object
+      required:
+        - phoneNumber
+        - cardNumber
+      properties:
+        phoneNumber:
+          type: string
+          example: "987654321"
+        cardNumber:
+          type: string
+          example: "4558111122223333"
+
+    WalletPaymentRequest:
+      type: object
+      required:
+        - senderPhone
+        - receiverPhone
+        - amount
+      properties:
+        senderPhone:
+          type: string
+          example: "987654321"
+        receiverPhone:
+          type: string
+          example: "912345678"
+        amount:
+          type: number
+          format: double
+          example: 45.50
+        description:
+          type: string
+          example: Almuerzo compartido
+
+    WalletTransaction:
+      type: object
+      properties:
+        id:
+          type: string
+        transactionCode:
+          type: string
+          example: YAP-A1B2C3D4E5
+        senderPhone:
+          type: string
+          example: "987654321"
+        receiverPhone:
+          type: string
+          example: "912345678"
+        amount:
+          type: number
+          format: double
+          example: 45.50
+        currency:
+          type: string
+          example: PEN
+        description:
+          type: string
+          example: Almuerzo compartido
+        status:
+          type: string
+          enum: [COMPLETED, PENDING_CARD_DEBIT, FAILED]
+          example: COMPLETED
+        timestamp:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+          example: 400
+        error:
+          type: string
+          example: Bad Request
+        message:
+          type: string
+          example: Saldo insuficiente en el monedero móvil

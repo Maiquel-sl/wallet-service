@@ -1,0 +1,67 @@
+server:
+  port: ${PORT:8085}
+
+spring:
+  application:
+    name: wallet-service
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017/wallet-service-db}
+  cloud:
+    function:
+      definition: walletLinkCardProducer;walletCardOperationProducer;walletLinkCardResultConsumer
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BROKERS:localhost:9092}
+      bindings:
+        walletLinkCardProducer-out-0:
+          destination: wallet-link-card-requests
+          content-type: application/json
+        walletCardOperationProducer-out-0:
+          destination: wallet-card-operations
+          content-type: application/json
+        walletLinkCardResultConsumer-in-0:
+          destination: wallet-link-card-results
+          group: wallet-service-group
+          content-type: application/json
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 10s
+        failureRateThreshold: 50
+    instances:
+      bankServiceCB:
+        baseConfig: default
+
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 2s
+        cancelRunningFuture: true
+    instances:
+      bankServiceCB:
+        baseConfig: default
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    # Ruta del archivo que creaste
+    url: /wallet-openapi.yml
+    # Cambia la ruta por defecto para acceder a la interfaz gráfica
+    path: /swagger-ui.html
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_SERVER_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
